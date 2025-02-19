@@ -189,8 +189,8 @@ def format_response(action: str, sql_query: str, rowcount: int = None, data: tup
     return responses[action]()
 
 # Streamlit UI Setup
-st.set_page_config(page_title="Database Chat Assistant", layout="wide")
-st.header("💬 Database Chat Assistant")
+st.set_page_config(page_title="Personal Chat Assistant", layout="wide")
+st.header("💬 Personal Chat Assistant")
 
 # Display chat history
 for message in st.session_state.messages:
