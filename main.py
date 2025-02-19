@@ -1,14 +1,16 @@
 import os
 import sqlite3
+import subprocess
+import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage, HumanMessage
-import pandas as pd
 
 # Load environment variables
 load_dotenv('.env')
 
+# Database
 DB_PATH='test.db'
 
 # Initialize ChatGroq
