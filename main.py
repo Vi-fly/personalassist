@@ -9,6 +9,8 @@ import pandas as pd
 # Load environment variables
 load_dotenv('.env')
 
+DB_PATH='test.db'
+
 # Initialize ChatGroq
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 llm = ChatGroq(
@@ -125,7 +127,7 @@ def generate_sql_query(prompt: str, action: str) -> str:
 def execute_query(sql_query: str):
     """Execute SQL query and return results."""
     try:
-        conn = sqlite3.connect('test.db', check_same_thread=False)  # Ensure proper handling
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)  # Ensure proper handling
         cur = conn.cursor()
         
         # Check if query is SELECT
@@ -188,6 +190,26 @@ def format_response(action: str, sql_query: str, rowcount: int = None, data: tup
     }
     return responses[action]()
 
+def push_db_to_github():
+    """Commit & push the updated database to GitHub."""
+    try:
+        if not os.path.exists(DB_PATH):
+            st.error("❌ No database file found.")
+            return
+
+        # Check if there are changes
+        result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+        if not result.stdout.strip():
+            st.sidebar.success("✅ No changes to commit.")
+            return
+
+        subprocess.run(["git", "add", DB_PATH], check=True)
+        subprocess.run(["git", "commit", "-m", "Manual update database"], check=True)
+        subprocess.run(["git", "push"], check=True)
+        st.sidebar.success("✅ Database changes pushed to GitHub successfully!")
+    except Exception as e:
+        st.sidebar.error(f"❌ Failed to push to GitHub: {e}")
+
 # Streamlit UI Setup
 st.set_page_config(page_title="Personal Chat Assistant", layout="wide")
 st.header("💬 Personal Chat Assistant")
@@ -249,3 +271,7 @@ st.sidebar.markdown("""
 - "Mark task 5 as completed"
 - "Update task 3's due date to tomorrow"
 """)
+
+if st.sidebar.button("Push Database Changes to GitHub"):
+    push_db_to_github()
+
