@@ -193,13 +193,20 @@ def format_response(action: str, sql_query: str, rowcount: int = None, data: tup
     return responses[action]()
 
 def push_db_to_github():
+    """Commit and push the updated database file to GitHub."""
     try:
-        subprocess.run(["git", "add", "test.db"], check=True)
+        # Check if there are any changes
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+        if not status.stdout.strip():
+            st.sidebar.warning("⚠️ No changes detected in the database file.")
+            return
+
+        subprocess.run(["git", "add", DB_FILE], check=True)
         subprocess.run(["git", "commit", "-m", "Manual update database"], check=True)
         subprocess.run(["git", "push", "origin", "main"], check=True)
-        st.success("✅ Successfully pushed database changes to GitHub!")
+        st.sidebar.success("✅ Database changes successfully pushed to GitHub!")
     except subprocess.CalledProcessError as e:
-        st.error(f"❌ Failed to push to GitHub: {e}")
+        st.sidebar.error(f"❌ Failed to push to GitHub: {e}")
 
 # Streamlit UI Setup
 st.set_page_config(page_title="Personal Chat Assistant", layout="wide")
