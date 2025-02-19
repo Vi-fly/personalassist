@@ -1,252 +1,58 @@
-import os
 import sqlite3
-import streamlit as st
-from dotenv import load_dotenv
-from langchain_groq import ChatGroq
-from langchain_core.messages import SystemMessage, HumanMessage
-import pandas as pd
 
-# Load environment variables
-load_dotenv('.env')
+conn = sqlite3.connect('test.db')
+cursor = conn.cursor()
 
-# Initialize ChatGroq
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-llm = ChatGroq(
-    api_key=GROQ_API_KEY,
-    model_name="llama-3.3-70b-versatile",
-)
+# Creating the Contacts table with constraints
+contacts_table = """
+CREATE TABLE IF NOT EXISTS CONTACTS (
+    NAME VARCHAR(100) NOT NULL,
+    PHONE INTEGER UNIQUE NOT NULL CHECK(LENGTH(PHONE) = 10),
+    EMAIL VARCHAR(100) UNIQUE NOT NULL,
+    ADDRESS TEXT
+);
+"""
+cursor.execute(contacts_table)
 
-# Initialize session state for chat history
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# Inserting data into CONTACTS
+contacts_data = [
+    ('ansh', 9876543210, 'vivekchoudhary75@gmail.com', '123, Lorem Ipsum Street, New York, NY 10001'),
+    ('vivek', 9999701072, 'vivekchoudhary795@gmail.com', 'Delhi'),
+    ('Akshit', 9999701034, 'vivekchoudhary565@gmail.com', 'Delhi'),
+    ('Vivek Choudhary', 9999701071, 'vivekchoudhary789@gmail.com', 'Delhi 110088'),
+    ('John Doe', 5551234123, 'john@example.com', '123 Main St'),
+    ('ishani', 1234567890, 'john.new@example.com', '456 New St'),
+    ('Vaibhav', 9999807097, 'vaibhav@gmail.com', 'jaipur'),
+    ('mohit', 9920128977, 'mohit@gmail.com', 'mumbai')
+]
 
-def generate_sql_query(prompt: str, action: str) -> str:
-    """Generate SQL query based on selected action and user input."""
-    system_prompts = {
-        "add": (
-            "You are an expert in generating SQL INSERT statements for a contacts and tasks database. "
-            "The database has two tables: CONTACTS and TASKS.\n\n"
-            
-            "CONTACTS Table Structure:\n"
-            "- NAME (VARCHAR, NOT NULL)\n"
-            "- PHONE (INTEGER, PRIMARY KEY, UNIQUE, NOT NULL, 10 digits)\n"
-            "- EMAIL (VARCHAR, UNIQUE, NOT NULL)\n"
-            "- ADDRESS (TEXT)\n\n"
-            
-            "TASKS Table Structure:\n"
-            "- ID (INTEGER, PRIMARY KEY, AUTOINCREMENT)\n"
-            "- TITLE (VARCHAR, NOT NULL)\n"
-            "- DESCRIPTION (TEXT)\n"
-            "- DUEDATE (DATE, NOT NULL)\n"
-            "- STATUS (TEXT, CHECK: 'on going', 'completed', 'not started', DEFAULT: 'on going')\n"
-            "- ASSIGNED_TO (INTEGER, FOREIGN KEY REFERENCES CONTACTS(PHONE), 10 digits)\n\n"
-            
-            "Rules for INSERT Statements:\n"
-            "1. For CONTACTS: INSERT INTO CONTACTS (NAME, PHONE, EMAIL, ADDRESS) VALUES (...)\n"
-            "2. For TASKS: INSERT INTO TASKS (TITLE, DESCRIPTION, DUEDATE, STATUS, ASSIGNED_TO) VALUES (...)\n"
-            "3. Phone numbers must be 10-digit integers\n"
-            "4. STATUS defaults to 'on going' if not specified\n"
-            "5. Use single quotes for string values\n"
-            "6. Return only the SQL query, no explanations\n\n"
-            
-            "Examples:\n"
-            "1. Add new contact: INSERT INTO CONTACTS (NAME, PHONE, EMAIL, ADDRESS) VALUES ('John Doe', 5551234567, 'john@email.com', 'New York');\n"
-            "2. Add new task: INSERT INTO TASKS (TITLE, DESCRIPTION, DUEDATE, ASSIGNED_TO) VALUES ('Project Setup', 'Initialize project repository', '2024-12-31', 5551234567);"
-        ),
-        "view": (
-            "You are an expert in generating SQL SELECT queries with JOINs for a contacts and tasks database. "
-            "The database has two tables: CONTACTS and TASKS.\n\n"
-            
-            "CONTACTS Table Structure:\n"
-            "- NAME (VARCHAR)\n"
-            "- PHONE (INTEGER, PRIMARY KEY)\n"
-            "- EMAIL (VARCHAR)\n"
-            "- ADDRESS (TEXT)\n\n"
-            
-            "TASKS Table Structure:\n"
-            "- ID (INTEGER, PRIMARY KEY)\n"
-            "- TITLE (VARCHAR)\n"
-            "- DESCRIPTION (TEXT)\n"
-            "- DUEDATE (DATE)\n"
-            "- STATUS (TEXT)\n"
-            "- ASSIGNED_TO (INTEGER, FOREIGN KEY REFERENCES CONTACTS(PHONE))\n\n"
-            
-            "Rules for SELECT Statements:\n"
-            "1. Always use JOINs when showing tasks to include assignee names\n"
-            "2. Use LOWER() for case-insensitive comparisons in WHERE clauses\n"
-            "3. Use proper table aliases (C for CONTACTS, T for TASKS)\n"
-            "4. Return only the SQL query, no explanations\n\n"
-            
-            "Examples:\n"
-            "1. Show all tasks: SELECT T.ID, T.TITLE, T.DESCRIPTION, T.DUEDATE, T.STATUS, C.NAME AS ASSIGNEE FROM TASKS T LEFT JOIN CONTACTS C ON T.ASSIGNED_TO = C.PHONE;\n"
-            "2. Find contacts from Delhi: SELECT * FROM CONTACTS WHERE LOWER(ADDRESS) LIKE '%delhi%';\n"
-            "3. Show ongoing tasks for John: SELECT T.ID, T.TITLE, T.DUEDATE FROM TASKS T JOIN CONTACTS C ON T.ASSIGNED_TO = C.PHONE WHERE LOWER(C.NAME) = LOWER('John Doe') AND T.STATUS = 'on going';"
-        ),
-        "update": (
-            "You are an expert in generating SQL UPDATE statements for a contacts and tasks database. "
-            "The database has two tables: CONTACTS and TASKS.\n\n"
-            
-            "Rules for UPDATE Statements:\n"
-            "1. For contacts, use PHONE as the identifier in WHERE clause\n"
-            "2. For tasks, use ID as the identifier in WHERE clause\n"
-            "3. Use single quotes for string values\n"
-            "4. Include only one SET clause per statement\n"
-            "5. Return only the SQL query, no explanations\n\n"
-            
-            "Examples:\n"
-            "1. Update contact email: UPDATE CONTACTS SET EMAIL = 'new@email.com' WHERE PHONE = 5551234567;\n"
-            "2. Mark task as completed: UPDATE TASKS SET STATUS = 'completed' WHERE ID = 5;\n"
-            "3. Change task due date: UPDATE TASKS SET DUEDATE = '2024-12-31' WHERE ID = 3;\n"
-            "4. UPDATE TASKS SET ASSIGNED_TO = (SELECT PHONE FROM CONTACTS WHERE NAME = 'vivek') WHERE ID = 10;"
-        )
-    }
-    
-    messages = [
-        SystemMessage(content=system_prompts[action]),
-        HumanMessage(content=prompt)
-    ]
-    
-    try:
-        response = llm.invoke(messages)
-        sql_query = response.content.strip()
-        
-        # Clean markdown formatting if present
-        if sql_query.startswith("```sql"):
-            sql_query = sql_query[6:-3].strip()
-        elif sql_query.startswith("```"):
-            sql_query = sql_query[3:-3].strip()
-            
-        return sql_query
-    except Exception as e:
-        st.error(f"Error generating SQL query: {e}")
-        return ""
-    
+cursor.executemany("INSERT INTO CONTACTS VALUES (?, ?, ?, ?)", contacts_data)
 
-def execute_query(sql_query: str):
-    """Execute SQL query and return results."""
-    try:
-        conn = sqlite3.connect('test.db', check_same_thread=False)  # Ensure proper handling
-        conn.execute("PRAGMA foreign_keys = ON;")
-        cur = conn.cursor()
-        
-        # Check if query is SELECT
-        if sql_query.strip().upper().startswith("SELECT"):
-            cur.execute(sql_query)
-            rows = cur.fetchall()
-            columns = [desc[0] for desc in cur.description] if cur.description else []
-            cur.close()
-            conn.close()
-            return columns, rows  # Return fetched data
-        
-        else:  # For INSERT, UPDATE, DELETE
-            cur.execute(sql_query)
-            affected_rows = cur.rowcount  # Store before closing
-            conn.commit()  # Ensure changes are committed
-            cur.close()
-            conn.close()
-            return None, affected_rows  # Return number of affected rows
-            
-    except sqlite3.Error as e:
-        st.error(f"SQL error: {e}")
-        return None, None
+# Creating the Tasks table with constraints
+tasks_table = """
+CREATE TABLE IF NOT EXISTS TASKS (
+    ID INTEGER PRIMARY KEY AUTOINCREMENT,
+    TITLE VARCHAR(255) NOT NULL,
+    DESCRIPTION TEXT,
+    DUEDATE DATE NOT NULL,
+    STATUS TEXT CHECK(STATUS IN ('on going', 'completed', 'not started')) NOT NULL DEFAULT 'on going',
+    ASSIGNED_TO INTEGER NOT NULL CHECK(LENGTH(ASSIGNED_TO) = 10),
+    FOREIGN KEY (ASSIGNED_TO) REFERENCES CONTACTS(PHONE)
+);
+"""
+cursor.execute(tasks_table)
 
+# Inserting data into TASKS
+tasks_data = [
+    ('Project Planning', 'Plan the initial phase of the project', '2025-03-01', 'on going', 9999701072),
+    ('Database Setup', 'Set up the database schema and tables', '2025-03-05', 'not started', 9999701034),
+    ('UI Design', 'Design the user interface for the application', '2025-03-10', 'on going', 9999807097),
+    ('Testing', 'Perform unit and integration testing', '2025-03-15', 'not started', 9920128977),
+    ('Deployment', 'Deploy the application to the production server', '2025-03-20', 'completed', 5551234123)
+]
 
-def classify_action(prompt: str) -> str:
-    """Classify user intent into add/view/update actions using LLM."""
-    system_prompt = (
-        "Classify the user's database request into one of: add, view, or update. "
-        "Respond ONLY with the action keyword. Rules:\n"
-        "- 'add' for creating new records (insert)\n"
-        "- 'view' for read operations (select)\n"
-        "- 'update' for modifying existing records\n"
-        "Examples:\n"
-        "User: Add new contact -> add\n"
-        "User: Show tasks -> view\n"
-        "User: Change email -> update\n"
-        "User: List contacts in NY -> view\n"
-        "User: Mark task 5 completed -> update"
-    )
-    
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=prompt)
-    ]
-    
-    try:
-        response = llm.invoke(messages)
-        action = response.content.strip().lower()
-        return action if action in ['add', 'view', 'update'] else 'view'
-    except Exception as e:
-        st.error(f"Error classifying action: {e}")
-        return 'view'
+cursor.executemany("INSERT INTO TASKS (TITLE, DESCRIPTION, DUEDATE, STATUS, ASSIGNED_TO) VALUES (?, ?, ?, ?, ?)", tasks_data)
 
-def format_response(action: str, sql_query: str, rowcount: int = None, data: tuple = None):
-    """Format the response based on the action."""
-    responses = {
-        "add": lambda: f"✅ Successfully added {rowcount} record(s)",
-        "update": lambda: f"✅ Successfully updated {rowcount} record(s)",
-        "view": lambda: (f"🔍 Found {len(data[1])} results:", data)
-    }
-    return responses[action]()
-
-# Streamlit UI Setup
-st.set_page_config(page_title="Database Chat Assistant", layout="wide")
-st.header("💬 Database Chat Assistant")
-
-# Display chat history
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# # Action selection
-# action = st.sidebar.selectbox("Choose Action", ["Add Data", "View Data", "Update Data"])
-
-# Main chat logic
-if prompt := st.chat_input("What would you like to do?"):
-    # Add user message to chat history
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # Classify user intent
-    action_type = classify_action(prompt)
-    
-    # Generate SQL query based on detected action
-    sql_query = generate_sql_query(prompt, action_type)
-    
-    if sql_query:
-        
-        #st.session_state.messages.append({"role": "assistant", "content": f"Generated SQL:\n```sql\n{sql_query}\n```"})  #debuging 
-        
-        # Execute query
-        columns, result = execute_query(sql_query)
-        
-        # Format response
-        if action_type == "view" and columns:
-            response_text = format_response(action_type, sql_query, data=(columns, result))
-            df = pd.DataFrame(result, columns=columns)
-            response = f"{response_text[0]}\n\n{df.to_markdown(index=False)}"
-        elif action_type in ["add", "update"]:
-            response = format_response(action_type, sql_query, rowcount=result)
-        else:
-            response = "❌ No results found or invalid query"
-        
-        # Add assistant response
-        st.session_state.messages.append({"role": "assistant", "content": response})
-        st.rerun()
-
-# Action-specific guidance
-st.sidebar.markdown("### Examples Guide")
-st.sidebar.markdown("""
-**Add Data Examples:**
-- "Add new contact: John, 5551234567, john@email.com, London"
-- "Create task: Project Setup, Initialize repo, 2024-12-31, 5551234567"
-
-**View Data Examples:**
-- "Show contacts from Delhi"
-- "List ongoing tasks for John"
-- "Display completed tasks"
-
-**Update Data Examples:**
-- "Change John's email to new@email.com"
-- "Mark task 5 as completed"
-- "Update task 3's due date to tomorrow"
-""")
+# Committing changes and closing connection
+conn.commit()
+conn.close()
