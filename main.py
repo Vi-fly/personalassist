@@ -78,7 +78,7 @@ def generate_sql_query(prompt: str, action: str) -> str:
             "4. Return only the SQL query, no explanations\n\n"
             
             "Examples:\n"
-            "1. Show all tasks: SELECT T.ID, T.TITLE, T.DESCRIPTION, T.DUEDATE, T.STATUS, C.NAME AS ASSIGNEE FROM TASKS T JOIN CONTACTS C ON T.ASSIGNED_TO = C.PHONE;\n"
+            "1. Show all tasks: SELECT T.ID, T.TITLE, T.DESCRIPTION, T.DUEDATE, T.STATUS, C.NAME AS ASSIGNEE FROM TASKS T LEFT JOIN CONTACTS C ON T.ASSIGNED_TO = C.PHONE;\n"
             "2. Find contacts from Delhi: SELECT * FROM CONTACTS WHERE LOWER(ADDRESS) LIKE '%delhi%';\n"
             "3. Show ongoing tasks for John: SELECT T.ID, T.TITLE, T.DUEDATE FROM TASKS T JOIN CONTACTS C ON T.ASSIGNED_TO = C.PHONE WHERE LOWER(C.NAME) = LOWER('John Doe') AND T.STATUS = 'on going';"
         ),
@@ -96,7 +96,8 @@ def generate_sql_query(prompt: str, action: str) -> str:
             "Examples:\n"
             "1. Update contact email: UPDATE CONTACTS SET EMAIL = 'new@email.com' WHERE PHONE = 5551234567;\n"
             "2. Mark task as completed: UPDATE TASKS SET STATUS = 'completed' WHERE ID = 5;\n"
-            "3. Change task due date: UPDATE TASKS SET DUEDATE = '2024-12-31' WHERE ID = 3;"
+            "3. Change task due date: UPDATE TASKS SET DUEDATE = '2024-12-31' WHERE ID = 3;\n"
+            "4. UPDATE TASKS SET ASSIGNED_TO = (SELECT PHONE FROM CONTACTS WHERE NAME = 'vivek') WHERE ID = 10;"
         )
     }
     
@@ -124,25 +125,31 @@ def generate_sql_query(prompt: str, action: str) -> str:
 def execute_query(sql_query: str):
     """Execute SQL query and return results."""
     try:
-        conn = sqlite3.connect('test.db')
+        conn = sqlite3.connect('test.db', check_same_thread=False)  # Ensure proper handling
+        conn.execute("PRAGMA foreign_keys = ON;")
         cur = conn.cursor()
         
-        # Determine if it's a SELECT query
+        # Check if query is SELECT
         if sql_query.strip().upper().startswith("SELECT"):
             cur.execute(sql_query)
             rows = cur.fetchall()
             columns = [desc[0] for desc in cur.description] if cur.description else []
+            cur.close()
             conn.close()
-            return columns, rows
+            return columns, rows  # Return fetched data
+        
         else:  # For INSERT, UPDATE, DELETE
             cur.execute(sql_query)
-            conn.commit()
+            affected_rows = cur.rowcount  # Store before closing
+            conn.commit()  # Ensure changes are committed
+            cur.close()
             conn.close()
-            return None, cur.rowcount
+            return None, affected_rows  # Return number of affected rows
             
     except sqlite3.Error as e:
         st.error(f"SQL error: {e}")
         return None, None
+
 
 def classify_action(prompt: str) -> str:
     """Classify user intent into add/view/update actions using LLM."""
@@ -207,7 +214,7 @@ if prompt := st.chat_input("What would you like to do?"):
     
     if sql_query:
         
-        # st.session_state.messages.append({"role": "assistant", "content": f"Generated SQL:\n```sql\n{sql_query}\n```"})  #debuging 
+        #st.session_state.messages.append({"role": "assistant", "content": f"Generated SQL:\n```sql\n{sql_query}\n```"})  #debuging 
         
         # Execute query
         columns, result = execute_query(sql_query)
