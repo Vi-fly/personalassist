@@ -242,7 +242,7 @@ if page == "🏠 Home":
         st.success(st.session_state.task_status)
         del st.session_state.task_status
     
-    st.header("💬 Database Chat Assistant")
+    st.header("💬 Personal Chat Assistant")
 
     # Display chat history
     for message in st.session_state.messages:
